@@ -183,7 +183,9 @@ def get_args_parser():
     parser.add_argument('--proxy', default=False, action='store_true', help='use proxy model') # implemented
     parser.add_argument('--combine_aug', default=False, action='store_true', help='use all 3 augments in one image')
     parser.add_argument('--same_aug', default=False, action='store_true', help='use two-level augment, not different level for each patch') # implemented
-    parser.add_argument('--patch_prob', default=0.2, type=float, help='precent of patches to keep') # implemented
+    parser.add_argument('--patch_prob', default=0.8, type=float, help='precent of patches to augment') # implemented
+    parser.add_argument('--patch_color_jitter', default=0.3, type=float) # implemented
+    parser.add_argument('--rand_patch', default=False, action='store_true', help='select patch with randomness')
 
     # parser.add_argument('--')
     return parser
@@ -268,7 +270,7 @@ def main(args):
         drop_rate=args.drop,
         drop_path_rate=args.drop_path,
         drop_block_rate=None,
-        attn_layer=None if args.proxy else 8,
+        attn_id=None if args.proxy else 8,
     )
 
     if args.proxy:
@@ -276,7 +278,7 @@ def main(args):
             'deit_tiny_patch16_224', 
             pretrained=True, 
             num_classes=args.nb_classes, 
-            attn_layer=8, 
+            attn_id=8, 
         )
     else:
         proxy_model = None
@@ -361,7 +363,7 @@ def main(args):
     print('number of params:', n_parameters)
     if not args.unscale_lr:
         linear_scaled_lr = args.lr * args.batch_size * utils.get_world_size() / 512.0
-    args.lr = linear_scaled_lr
+        args.lr = linear_scaled_lr
     optimizer = create_optimizer(args, model_without_ddp)
     loss_scaler = NativeScaler()
 

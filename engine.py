@@ -17,7 +17,7 @@ from timm.utils import accuracy, ModelEma
 from losses import DistillationLoss
 import utils
 
-from augment import norm, denorm, apply_attn_aug
+from augment import norm, denorm, apply_attn_augment
 
 def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
@@ -42,21 +42,21 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
             samples, targets = mixup_fn(samples, targets)
         
         with torch.no_grad():
-            if args.proxy_model:
+            if args.proxy:
                 _, attn = proxy_model(samples)
             else:
                 model.eval()
                 _, attn = model(samples)
                 model.train()
-
+        print(attn.shape)
         if args.bce_loss:
             targets = targets.gt(0.0).type(targets.dtype)
         
         # attn augment 
         denorm(samples)
-        samples = apply_attn_aug(samples, attn, args)
+        samples = apply_attn_augment(samples, attn, args)
         norm(samples)
-
+        
         with torch.cuda.amp.autocast():
             outputs, _ = model(samples)
             loss = criterion(samples, outputs, targets)

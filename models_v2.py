@@ -13,9 +13,9 @@ from timm.models.registry import register_model
 
 class Attention(nn.Module):
     # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
-    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., attn=False):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., get_attn=False):
         super().__init__()
-        self.attn = attn
+        self.get_attn = get_attn
         self.num_heads = num_heads
         head_dim = dim // num_heads
         self.scale = qk_scale or head_dim ** -0.5
@@ -33,9 +33,9 @@ class Attention(nn.Module):
         q = q * self.scale
 
         attn = (q @ k.transpose(-2, -1))
-        if self.attn:
+        if self.get_attn:
             with torch.no_grad():
-                print(attn.shape)
+                # print(attn.shape)
                 attn_score = attn.clone() 
                 attn_score = attn_score.sum(dim=[1,2])
 
@@ -45,9 +45,10 @@ class Attention(nn.Module):
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
-        if self.attn:
+        if self.get_attn:
             attn_score = attn_score.detach().cpu()
-            return x, attn_score 
+            attn_score = attn_score - attn_score.min() 
+            return x, attn_score[:,1:]  
         else:
             return x
     
@@ -55,12 +56,12 @@ class Block(nn.Module):
     # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,Attention_block = Attention,Mlp_block=Mlp
-                 ,init_values=1e-4, attn=False):
+                 ,init_values=1e-4, get_attn=False):
         super().__init__()
-        self.attn = attn
+        self.get_attn = get_attn
         self.norm1 = norm_layer(dim)
         self.attn = Attention_block(
-            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, attn=attn)
+            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, get_attn=get_attn)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -68,13 +69,13 @@ class Block(nn.Module):
         self.mlp = Mlp_block(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
     def forward(self, x):
-        if self.attn:
+        if self.get_attn:
             tmp, attn = self.attn(self.norm1(x))
             x = x + self.drop_path(tmp)
         else:
             x = x + self.drop_path(self.attn(self.norm1(x)))
         x = x + self.drop_path(self.mlp(self.norm2(x)))
-        if self.attn:
+        if self.get_attn:
             return x, attn 
         else:
             return x 
@@ -84,12 +85,14 @@ class Layer_scale_init_Block(nn.Module):
     # with slight modifications
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,Attention_block = Attention,Mlp_block=Mlp
-                 ,init_values=1e-4, attn=False):
+                 ,init_values=1e-4, get_attn=False):
         super().__init__()
-        self.attn = attn
+        print('using Layer_scale_init_Block')
+        print('get_attn is {}'.format(get_attn))
+        self.get_attn = get_attn
         self.norm1 = norm_layer(dim)
         self.attn = Attention_block(
-            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, attn=attn)
+            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, get_attn=get_attn)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -99,15 +102,16 @@ class Layer_scale_init_Block(nn.Module):
         self.gamma_2 = nn.Parameter(init_values * torch.ones((dim)),requires_grad=True)
 
     def forward(self, x):
-        if self.attn:
+        if self.get_attn:
             tmp, attn = self.attn(self.norm1(x))
             x = x + self.drop_path(self.gamma_1 * tmp)
         else:
             x = x + self.drop_path(self.gamma_1 * self.attn(self.norm1(x)))
         x = x + self.drop_path(self.gamma_2 * self.mlp(self.norm2(x)))
-        if self.attn:
-            return x, attn 
+        if self.get_attn:
+            return x, attn
         else:
+            # print(len(x))
             return x
 
 class Layer_scale_init_Block_paralx2(nn.Module):
@@ -211,7 +215,7 @@ class vit_models(nn.Module):
                 dpr_constant=True,init_scale=1e-4,
                 mlp_ratio_clstk = 4.0, attn_id=None):
         super().__init__()
-        
+        self.attn_id = attn_id 
         self.dropout_rate = drop_rate
 
             
@@ -231,7 +235,7 @@ class vit_models(nn.Module):
             block_layers(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=0.0, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
-                act_layer=act_layer,Attention_block=Attention_block,Mlp_block=Mlp_block,init_values=init_scale, attn=True if i == attn_id else False)
+                act_layer=act_layer,Attention_block=Attention_block,Mlp_block=Mlp_block,init_values=init_scale, get_attn=True if i == attn_id else False)
             for i in range(depth)])
         
 
@@ -280,7 +284,9 @@ class vit_models(nn.Module):
         x = torch.cat((cls_tokens, x), dim=1)
             
         for i , blk in enumerate(self.blocks):
+            # print(i)
             if i == self.attn_id:
+                # print('attn block')
                 x, attn = blk(x)
             else:
                 x = blk(x)
