@@ -48,36 +48,38 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
                 model.eval()
                 _, attn = model(samples)
                 model.train()
-        print(attn.shape)
+        # print(attn.shape)
         if args.bce_loss:
             targets = targets.gt(0.0).type(targets.dtype)
-        
+        print('inited target')
         # attn augment 
         denorm(samples)
+        print('inited target')
         samples = apply_attn_augment(samples, attn, args)
+        print('inited target')
         norm(samples)
-        
+       	print('augmented') 
         with torch.cuda.amp.autocast():
             outputs, _ = model(samples)
             loss = criterion(samples, outputs, targets)
-
+      
         loss_value = loss.item()
-
+        print('loss got')
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
             sys.exit(1)
 
         optimizer.zero_grad()
-
+        print('optim init')
         # this attribute is added by timm on one optimizer (adahessian)
         is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
         loss_scaler(loss, optimizer, clip_grad=max_norm,
                     parameters=model.parameters(), create_graph=is_second_order)
-
+        print('loss update')
         torch.cuda.synchronize()
         if model_ema is not None:
             model_ema.update(model)
-
+        print('ema update')
         metric_logger.update(loss=loss_value)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
     # gather the stats from all processes
