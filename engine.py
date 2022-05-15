@@ -51,35 +51,38 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
         # print(attn.shape)
         if args.bce_loss:
             targets = targets.gt(0.0).type(targets.dtype)
-        print('inited target')
+        # print('inited target')
         # attn augment 
         denorm(samples)
-        print('inited target')
+        # print('inited target')
         samples = apply_attn_augment(samples, attn, args)
-        print('inited target')
+        # print('inited target')
         norm(samples)
-       	print('augmented') 
+       	# print('augmented') 
         with torch.cuda.amp.autocast():
-            outputs, _ = model(samples)
+            if args.proxy:
+                outputs = model(samples)
+            else:
+                outputs, _ = model(samples)
             loss = criterion(samples, outputs, targets)
       
         loss_value = loss.item()
-        print('loss got')
+        # print('loss got')
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
             sys.exit(1)
 
         optimizer.zero_grad()
-        print('optim init')
+        # print('optim init')
         # this attribute is added by timm on one optimizer (adahessian)
         is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
         loss_scaler(loss, optimizer, clip_grad=max_norm,
                     parameters=model.parameters(), create_graph=is_second_order)
-        print('loss update')
+        # print('loss update')
         torch.cuda.synchronize()
         if model_ema is not None:
             model_ema.update(model)
-        print('ema update')
+        # print('ema update')
         metric_logger.update(loss=loss_value)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
     # gather the stats from all processes
@@ -89,7 +92,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
 
 
 @torch.no_grad()
-def evaluate(data_loader, model, device):
+def evaluate(data_loader, model, device, args):
     criterion = torch.nn.CrossEntropyLoss()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -104,7 +107,10 @@ def evaluate(data_loader, model, device):
 
         # compute output
         with torch.cuda.amp.autocast():
-            output = model(images)
+            if args.proxy:
+                output = model(images)
+            else:
+                output, _ = model(images)
             loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
