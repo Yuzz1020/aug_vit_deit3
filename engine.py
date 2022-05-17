@@ -27,7 +27,6 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
     model.train(set_training_mode)
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    metric_logger.add_meter('aug_time', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
@@ -49,41 +48,43 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
                 model.eval()
                 _, attn = model(samples)
                 model.train()
-        print(attn.shape)
+        # print(attn.shape)
         if args.bce_loss:
             targets = targets.gt(0.0).type(targets.dtype)
-        
+        # print('inited target')
         # attn augment 
-        start_patch_aug = time.time()
         denorm(samples)
+        # print('inited target')
         samples = apply_attn_augment(samples, attn, args)
+        # print('inited target')
         norm(samples)
-        patch_aug_time = time.time() - start_patch_aug
-        
+       	# print('augmented') 
         with torch.cuda.amp.autocast():
-            outputs, _ = model(samples)
+            if args.proxy:
+                outputs = model(samples)
+            else:
+                outputs, _ = model(samples)
             loss = criterion(samples, outputs, targets)
-
+      
         loss_value = loss.item()
-
+        # print('loss got')
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
             sys.exit(1)
 
         optimizer.zero_grad()
-
+        # print('optim init')
         # this attribute is added by timm on one optimizer (adahessian)
         is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
         loss_scaler(loss, optimizer, clip_grad=max_norm,
                     parameters=model.parameters(), create_graph=is_second_order)
-
+        # print('loss update')
         torch.cuda.synchronize()
         if model_ema is not None:
             model_ema.update(model)
-
+        # print('ema update')
         metric_logger.update(loss=loss_value)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
-        metric_logger.update(aug_time=patch_aug_time)
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
@@ -91,7 +92,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
 
 
 @torch.no_grad()
-def evaluate(data_loader, model, device):
+def evaluate(data_loader, model, device, args):
     criterion = torch.nn.CrossEntropyLoss()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -106,7 +107,10 @@ def evaluate(data_loader, model, device):
 
         # compute output
         with torch.cuda.amp.autocast():
-            output = model(images)
+            if args.proxy:
+                output = model(images)
+            else:
+                output, _ = model(images)
             loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
