@@ -27,6 +27,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
     model.train(set_training_mode)
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    metric_logger.add_meter('aug_time', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
@@ -53,11 +55,13 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
             targets = targets.gt(0.0).type(targets.dtype)
         # print('inited target')
         # attn augment 
+        patch_start = time.time()
         denorm(samples)
         # print('inited target')
         samples = apply_attn_augment(samples, attn, args)
         # print('inited target')
         norm(samples)
+        patch_end = time.time() - patch_start
        	# print('augmented') 
         with torch.cuda.amp.autocast():
             if args.proxy:
@@ -85,6 +89,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
         # print('ema update')
         metric_logger.update(loss=loss_value)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        metric_logger.update(aug_time=patch_end)
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
